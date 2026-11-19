@@ -1,0 +1,219 @@
+bot.py
+
+import os
+import re
+from telegram import Update, ChatPermissions
+from telegram.ext import (
+    ApplicationBuilder, CommandHandler, MessageHandler,
+    ChatMemberHandler, ContextTypes, filters
+)
+
+TOKEN = os.getenv("BOT_TOKEN")
+
+BAD_WORDS = ["küfür1", "küfür2", "küfür3"]
+warnings = {}
+
+async def is_admin(update, context):
+    user = update.effective_user
+    if not user:
+        return False
+    member = await context.bot.get_chat_member(
+        update.effective_chat.id, user.id
+    )
+    return member.status in ("administrator", "creator")
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "👑 ASİL ADMİN BOT aktif!\n"
+        "Yardım için /help yaz."
+    )
+
+async def help_command(update, context):
+    await update.message.reply_text(
+        "👑 ASİL ADMİN BOT KOMUTLARI\n\n"
+        "/rules - Grup kuralları\n"
+        "/ban - Üyeyi yasakla (mesaja yanıt ver)\n"
+        "/unban - Yasağı kaldır\n"
+        "/mute - Üyeyi sustur (mesaja yanıt ver)\n"
+        "/unmute - Susturmayı kaldır\n"
+        "/kick - Üyeyi çıkar (mesaja yanıt ver)\n"
+        "/warn - Uyarı ver (mesaja yanıt ver)\n"
+        "/admins - Yöneticileri göster\n"
+        "/info - Bilgi göster\n"
+        "/clean - Yanıt verilen mesajı sil"
+    )
+
+async def rules(update, context):
+    await update.message.reply_text(
+        "📜 GRUP KURALLARI\n"
+        "1. Saygılı ol.\n"
+        "2. Küfür etme.\n"
+        "3. Reklam ve spam yapma.\n"
+        "4. Üyeleri rahatsız etme."
+    )
+
+async def admins(update, context):
+    members = await context.bot.get_chat_administrators(
+        update.effective_chat.id
+    )
+    names = [m.user.first_name for m in members]
+    await update.message.reply_text(
+        "👑 Grup yöneticileri:\n" + "\n".join(names)
+    )
+
+async def info(update, context):
+    user = update.effective_user
+    await update.message.reply_text(
+        f"👤 Ad: {user.full_name}\n"
+        f"🆔 ID: {user.id}"
+    )
+
+async def ban(update, context):
+    if not await is_admin(update, context):
+        return
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Bir üyenin mesajına yanıt ver.")
+        return
+    user = update.message.reply_to_message.from_user
+    await context.bot.ban_chat_member(update.effective_chat.id, user.id)
+    await update.message.reply_text("🚫 Üye yasaklandı.")
+
+async def unban(update, context):
+    if not await is_admin(update, context):
+        return
+    if not context.args:
+        await update.message.reply_text("Kullanım: /unban KULLANICI_ID")
+        return
+    await context.bot.unban_chat_member(
+        update.effective_chat.id, int(context.args[0])
+    )
+    await update.message.reply_text("✅ Yasak kaldırıldı.")
+
+async def mute(update, context):
+    if not await is_admin(update, context):
+        return
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Bir üyenin mesajına yanıt ver.")
+        return
+    user = update.message.reply_to_message.from_user
+    await context.bot.restrict_chat_member(
+        update.effective_chat.id,
+        user.id,
+        ChatPermissions(can_send_messages=False)
+    )
+    await update.message.reply_text("🔇 Üye susturuldu.")
+
+async def unmute(update, context):
+    if not await is_admin(update, context):
+        return
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Bir üyenin mesajına yanıt ver.")
+        return
+    user = update.message.reply_to_message.from_user
+    await context.bot.restrict_chat_member(
+        update.effective_chat.id,
+        user.id,
+        ChatPermissions(
+            can_send_messages=True,
+            can_send_audios=True,
+            can_send_documents=True,
+            can_send_photos=True,
+            can_send_videos=True,
+            can_send_video_notes=True,
+            can_send_voice_notes=True,
+            can_send_polls=True,
+            can_add_web_page_previews=True
+        )
+    )
+    await update.message.reply_text("🔊 Üyenin susturması kaldırıldı.")
+
+async def kick(update, context):
+    if not await is_admin(update, context):
+        return
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Bir üyenin mesajına yanıt ver.")
+        return
+    user = update.message.reply_to_message.from_user
+    await context.bot.ban_chat_member(update.effective_chat.id, user.id)
+    await context.bot.unban_chat_member(update.effective_chat.id, user.id)
+    await update.message.reply_text("👢 Üye gruptan çıkarıldı.")
+
+async def warn(update, context):
+    if not await is_admin(update, context):
+        return
+    if not update.message.reply_to_message:
+        await update.message.reply_text("Bir üyenin mesajına yanıt ver.")
+        return
+    user = update.message.reply_to_message.from_user
+    key = (update.effective_chat.id, user.id)
+    warnings[key] = warnings.get(key, 0) + 1
+    count = warnings[key]
+    if count >= 3:
+        await context.bot.ban_chat_member(update.effective_chat.id, user.id)
+        await update.message.reply_text("⛔ 3 uyarı! Üye yasaklandı.")
+    else:
+        await update.message.reply_text(
+            f"⚠️ {user.first_name}, uyarı: {count}/3"
+        )
+
+async def clean(update, context):
+    if not await is_admin(update, context):
+        return
+    if update.message.reply_to_message:
+        await update.message.reply_to_message.delete()
+        await update.message.reply_text("🧹 Mesaj silindi.")
+
+async def welcome(update, context):
+    for member in update.message.new_chat_members:
+        await update.message.reply_text(
+            f"👋 Hoş geldin {member.first_name}!\n"
+            "AsilAdminBot grubumuzu koruyor. 👑"
+        )
+
+async def filter_messages(update, context):
+    message = update.message
+    if not message or not message.text:
+        return
+    if await is_admin(update, context):
+        return
+
+    text = message.text.lower()
+
+    if any(word in text for word in BAD_WORDS):
+        await message.delete()
+        return
+
+    if re.search(r"(https?://|www\.|t\.me/)", text):
+        await message.delete()
+        return
+
+def main():
+    if not TOKEN:
+        raise RuntimeError("BOT_TOKEN ayarlanmamış!")
+
+    app = ApplicationBuilder().token(TOKEN).build()
+
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("help", help_command))
+    app.add_handler(CommandHandler("rules", rules))
+    app.add_handler(CommandHandler("admins", admins))
+    app.add_handler(CommandHandler("info", info))
+    app.add_handler(CommandHandler("ban", ban))
+    app.add_handler(CommandHandler("unban", unban))
+    app.add_handler(CommandHandler("mute", mute))
+    app.add_handler(CommandHandler("unmute", unmute))
+    app.add_handler(CommandHandler("kick", kick))
+    app.add_handler(CommandHandler("warn", warn))
+    app.add_handler(CommandHandler("clean", clean))
+    app.add_handler(
+        MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, welcome)
+    )
+    app.add_handler(
+        MessageHandler(filters.TEXT & ~filters.COMMAND, filter_messages)
+    )
+
+    print("ASİL ADMİN BOT çalışıyor!")
+    app.run_polling()
+
+if __name__ == "__main__":
+    main()
